@@ -127,26 +127,33 @@ def install_commands(env: Environment, languages: list[str] | None = None) -> li
 
 
 def report(env: Environment | None = None, use_color: bool = False) -> str:
-    """A readable summary for `archray doctor`."""
+    """A readable summary for `archray --doctor`.
+
+    Uses plain ASCII fallbacks when the output stream cannot be trusted to
+    render Unicode — see `cli.py`'s `_ensure_utf8_streams()`, which reconfigures
+    stdout to UTF-8 before this is ever printed, but a library caller printing
+    this elsewhere (a legacy Windows console, a log file opened as cp1252) may
+    not have done that, so this stays conservative rather than assuming it.
+    """
     env = env or detect()
-    tick, cross = ("✓", "✗")
+    tick, cross, rule = ("v", "x", "-")
     if use_color:
-        tick, cross = ("\033[92m✓\033[0m", "\033[91m✗\033[0m")
+        tick, cross = ("\033[92mv\033[0m", "\033[91mx\033[0m")
 
     lines = [
         "",
         "  Environment",
-        "  " + "─" * 58,
+        "  " + rule * 58,
         f"  Python           {env.python} ({env.implementation})",
-        f"  Platform         {env.platform_tag} · {env.system}",
+        f"  Platform         {env.platform_tag} . {env.system}",
     ]
     if env.msystem:
         lines.append(f"  MSYS2            {env.msystem}"
-                     f" — toolchain prefix {MSYS_TOOLCHAIN.get(env.msystem, '?')}")
+                     f" -- toolchain prefix {MSYS_TOOLCHAIN.get(env.msystem, '?')}")
     lines.append(f"  C compiler       {env.compiler or 'not found'}")
     lines.append(f"  Prebuilt wheels  {'expected' if env.wheels_available else 'not available'}")
 
-    lines += ["", "  Language support", "  " + "─" * 58,
+    lines += ["", "  Language support", "  " + rule * 58,
               f"  {tick if env.core_available else cross} tree-sitter core"
               "        (needed by every language except Python)"]
     lines.append(f"  {tick} python            built in, no dependency")
@@ -156,7 +163,7 @@ def report(env: Environment | None = None, use_color: bool = False) -> str:
                      f"{PACKAGE_HINT.get(language, '')}")
 
     if env.missing:
-        lines += ["", "  To enable the missing languages", "  " + "─" * 58]
+        lines += ["", "  To enable the missing languages", "  " + rule * 58]
         lines += ["    " + command for command in install_commands(env)]
         lines += ["",
                   "  ArchRay works without them: unavailable languages are skipped and",
@@ -166,3 +173,4 @@ def report(env: Environment | None = None, use_color: bool = False) -> str:
 
     lines.append("")
     return "\n".join(lines)
+ 

@@ -25,6 +25,27 @@ GRADE_COLOR = {"A": "\033[92m", "B": "\033[92m", "C": "\033[93m",
 LANGUAGES = ["auto", "python", "java", "typescript", "csharp", "cpp", "c"]
 
 
+def _ensure_utf8_streams() -> None:
+    """Make stdout/stderr UTF-8 regardless of the console's code page.
+
+    A plain Windows console defaults to a legacy code page — cp1252, cp437 —
+    that cannot encode the tick marks, box-drawing separators and arrows this
+    CLI prints, and Python raises `UnicodeEncodeError` the moment one is
+    written. Reconfiguring the streams here fixes it for every command that
+    goes through `main()`, without requiring `PYTHONIOENCODING=utf-8` or
+    `chcp 65001` to be set beforehand. It is a no-op on platforms that are
+    already UTF-8 (Linux, macOS, modern Windows Terminal).
+    """
+    for name in ("stdout", "stderr"):
+        stream = getattr(sys, name, None)
+        if stream is None or not hasattr(stream, "reconfigure"):
+            continue
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except (ValueError, OSError):
+            pass
+
+
 def _paint(text: str, key: str, enabled: bool) -> str:
     return f"{COLORS.get(key, '')}{text}{COLORS['reset']}" if enabled else text
 
@@ -76,13 +97,27 @@ def print_summary(report: dict, top: int, color: bool) -> None:
     print()
     print(_paint(f"  {repository.get('name', 'project')}", "bold", color),
           _paint(f"({repository.get('ref') or 'local'})", "dim", color))
-    print("  " + "─" * 62)
+    print("  " + "-" * 62)
     print(f"  Health score   {health['score']}/100   grade:{grade_text}  {health['verdict']}")
     for dimension in health["dimensions"]:
         filled = int(dimension["score"] / 5)
-        bar = "█" * filled + "·" * (20 - filled)
+        bar = "#" * filled + "." * (20 - filled)
         print(f"    {dimension['label']:<22} {bar} {dimension['score']:>3}")
-    print("  " + "─" * 62)
+    print("  " + "-" * 62)
+
+    languages = summary.get("languages") or []
+    if len(languages) > 1:
+        breakdown = " . ".join(f"{item['language']} {item['sloc']}" for item in languages)
+        print(f"  Languages: {breakdown}")
+    print(f"  {summary['modules']} modules . {summary['classes']} classes . "
+          f"{summary['functions']} functions . {summary['sloc']} lines of code")
+
+    severities = summary["by_severity"]
+    print(f"  {summary['findings']} findings -> "
+          f"{_paint(str(severities.get('critical', 0)) + ' critical', 'critical', color)}, "
+          f"{_paint(str(severities.get('major', 0)) + ' major', 'major', color)}, "
+          f"{_paint(str(severities.get('minor', 0)) + ' minor', 'minor', color)}")
+    print(f"  {summary['patterns']} design patterns . {summary['cycles']} circular dependencies")
 
     unsupported = repository.get("unsupported") or []
     if unsupported:
@@ -91,38 +126,24 @@ def print_summary(report: dict, top: int, color: bool) -> None:
                          f"grammar not installed", "warning", color))
         print(_paint("    run `archray --doctor` for the exact install command", "dim", color))
 
-    languages = summary.get("languages") or []
-    if len(languages) > 1:
-        breakdown = " · ".join(f"{item['language']} {item['sloc']}" for item in languages)
-        print(f"  Languages: {breakdown}")
-    print(f"  {summary['modules']} modules · {summary['classes']} classes · "
-          f"{summary['functions']} functions · {summary['sloc']} lines of code")
-
-    severities = summary["by_severity"]
-    print(f"  {summary['findings']} findings → "
-          f"{_paint(str(severities.get('critical', 0)) + ' critical', 'critical', color)}, "
-          f"{_paint(str(severities.get('major', 0)) + ' major', 'major', color)}, "
-          f"{_paint(str(severities.get('minor', 0)) + ' minor', 'minor', color)}")
-    print(f"  {summary['patterns']} design patterns · {summary['cycles']} circular dependencies")
-
     if report["top_debt"]:
         print()
         print(_paint("  Most urgent technical debt", "bold", color))
         for item in report["top_debt"][:top]:
             tag = _paint(f"[{item['severity']}]", item["severity"], color)
-            print(f"   {item['rank']}. {tag} {item['title']} — {item['symbol'] or item['file']}")
+            print(f"   {item['rank']}. {tag} {item['title']} -- {item['symbol'] or item['file']}")
             print(_paint(f"      {item['file']}:{item['line']}", "dim", color))
 
     evolution = report.get("history")
     if evolution:
         print()
-        print(_paint(f"  History  {evolution['commits_scanned']} commits · "
+        print(_paint(f"  History  {evolution['commits_scanned']} commits . "
                      f"{evolution['authors']} authors", "bold", color))
         for spot in evolution["hotspots"][:3]:
-            print(f"   · {spot['file']} — {spot['revisions']} changes, "
+            print(f"   . {spot['file']} -- {spot['revisions']} changes, "
                   f"complexity {spot['complexity']}, risk {spot['risk']}")
         for link in evolution["coupling"][:2]:
-            print(f"   · changes together: {link['files'][0]} ↔ {link['files'][1]} "
+            print(f"   . changes together: {link['files'][0]} <-> {link['files'][1]} "
                   f"({int(link['degree'] * 100)}%)")
 
     print_structural_changes(report, color)
@@ -130,7 +151,7 @@ def print_summary(report: dict, top: int, color: bool) -> None:
     diff = report.get("comparison")
     if diff:
         print()
-        arrow = "▲" if diff["score_delta"] > 0 else ("▼" if diff["score_delta"] < 0 else "=")
+        arrow = "^" if diff["score_delta"] > 0 else ("v" if diff["score_delta"] < 0 else "=")
         print(_paint(f"  Against the previous report  {arrow} {diff['score_delta']:+} points",
                      "bold", color))
         print(f"   {diff['verdict']}")
@@ -140,7 +161,7 @@ def print_summary(report: dict, top: int, color: bool) -> None:
         print()
         print(_paint("  Detected patterns", "bold", color))
         for match in patterns:
-            print(f"   · {match['pattern']:<20} {int(match['confidence'] * 100):>3}%  "
+            print(f"   . {match['pattern']:<20} {int(match['confidence'] * 100):>3}%  "
                   f"{', '.join(match['participants'][:3])}")
     print()
 
@@ -153,7 +174,7 @@ def print_structural_changes(report: dict, color: bool) -> None:
     print(_paint(f"  What changed since {changes['revision']}", "bold", color))
     print(f"   {changes['headline']}")
     for note in changes["highlights"][:8]:
-        marker = "!" if note["level"] == "warning" else "·"
+        marker = "!" if note["level"] == "warning" else "."
         print(f"   {_paint(marker, 'warning' if note['level'] == 'warning' else 'dim', color)} "
               f"{note['text']}")
     counts = changes["functions"]["counts"]
@@ -186,6 +207,8 @@ def run_structural_diff(args, report: dict, thresholds: Thresholds) -> dict | No
 
 
 def main(argv: list[str] | None = None) -> int:
+    _ensure_utf8_streams()
+
     parser = build_parser()
     args = parser.parse_args(argv)
     color = sys.stdout.isatty() and not args.no_color
@@ -236,7 +259,7 @@ def main(argv: list[str] | None = None) -> int:
 
     print_summary(report, args.top, color)
     for path in outputs:
-        print(f"  → {path}")
+        print(f"  -> {path}")
     print()
 
     diff = report.get("comparison")
