@@ -1,0 +1,13 @@
+# Çekirdek analiz motoru yalnızca standart kütüphaneyi kullanır.
+# Web servisi (Faz 4) için:
+fastapi>=0.110
+uvicorn[standard]>=0.27
+# Java, TypeScript, C#, C++ ve C ön uçları için:
+tree-sitter>=0.23
+tree-sitter-java>=0.23
+tree-sitter-typescript>=0.23
+tree-sitter-c-sharp>=0.23
+tree-sitter-cpp>=0.23
+tree-sitter-c>=0.23
+# Testler için:
+pytest>=8.0

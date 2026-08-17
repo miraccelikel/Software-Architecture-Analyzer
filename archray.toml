@@ -1,0 +1,17 @@
+# ArchRay thresholds — archray --config archray.toml
+[thresholds]
+complexity_warning = 10
+complexity_critical = 20
+god_class_loc = 500
+god_class_methods = 20
+long_method_loc = 50
+max_parameters = 5
+lcom4_warning = 2
+ocp_branches = 4
+isp_abstract_methods = 5
+
+# Rules to silence and paths to skip
+# ignore_rules = ["magic_number"]
+# exclude_paths = ["generated/*", "vendor/*"]
+clone_min_nodes = 28
+clone_min_lines = 6

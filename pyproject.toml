@@ -1,0 +1,55 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "archray"
+version = "0.1.0"
+description = "GitHub depoları için mimari analiz aracı: SOLID ihlalleri, kod kokuları, tasarım desenleri ve bağımlılık grafiği"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{name = "Miraç Çelikel"}]
+keywords = ["static-analysis", "solid", "design-patterns", "code-smells", "ast"]
+dependencies = []
+
+[project.optional-dependencies]
+# Python analysis needs nothing at all; every extra below is opt-in.
+web = ["fastapi>=0.110", "uvicorn[standard]>=0.27"]
+explore = ["streamlit>=1.30", "pandas>=2.0"]
+dev = ["pytest>=8.0", "pyyaml>=6.0"]
+
+# One extra per grammar, so an environment that can only build some of them
+# installs only those. `pip install archray[java]` is a valid, useful install.
+java = ["tree-sitter>=0.23", "tree-sitter-java>=0.23"]
+typescript = ["tree-sitter>=0.23", "tree-sitter-typescript>=0.23"]
+csharp = ["tree-sitter>=0.23", "tree-sitter-c-sharp>=0.23"]
+cpp = ["tree-sitter>=0.23", "tree-sitter-cpp>=0.23"]
+c = ["tree-sitter>=0.23", "tree-sitter-c>=0.23"]
+parsers = [
+    "archray[java]",
+    "archray[typescript]",
+    "archray[csharp]",
+    "archray[cpp]",
+    "archray[c]",
+]
+all = ["archray[parsers]", "archray[web]", "archray[explore]", "archray[dev]"]
+
+[project.scripts]
+archray = "archray.cli:main"
+software-architecture-analyzer = "archray.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/miraccelikel/software-architecture-analyzer"
+Repository = "https://github.com/miraccelikel/software-architecture-analyzer"
+Issues = "https://github.com/miraccelikel/software-architecture-analyzer/issues"
+
+[tool.setuptools]
+packages = ["archray"]
+
+[tool.setuptools.package-data]
+archray = ["ui/*.html"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

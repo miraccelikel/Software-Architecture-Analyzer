@@ -1,0 +1,140 @@
+# ArchRay in a pull request:
+#   1. findings are uploaded as SARIF -> inline annotations on the changed lines
+#   2. the structural + cross-language diff is posted as a sticky comment
+#   3. the job fails when the change opens new findings or breaks a contract
+#
+# Copy this to .github/workflows/archray.yml
+name: ArchRay
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  security-events: write     # to upload SARIF
+  pull-requests: write       # to post the comment
+
+concurrency:
+  group: archray-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  architecture:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # --history and --changes read the log; use 1 if you enable neither
+          fetch-depth: 400
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install ArchRay
+        run: pip install "archray[parsers] @ git+https://github.com/miraccelikel/software-architecture-analyzer"
+
+      - name: Verify the parser toolchain
+        run: archray --doctor
+
+      - name: Baseline from the target branch
+        if: github.event_name == 'pull_request'
+        run: |
+          git fetch --no-tags --depth=400 origin "${{ github.base_ref }}"
+          git worktree add /tmp/base "origin/${{ github.base_ref }}"
+          archray /tmp/base --format json --out /tmp/base-report
+
+      - name: Analyse
+        run: |
+          archray . --history 400 \
+            --format json,html,sarif,pr,md,changes \
+            --out archray-report \
+            ${{ github.event_name == 'pull_request'
+                && format('--compare /tmp/base-report.json --changes origin/{0}', github.base_ref)
+                || '' }}
+
+      # SARIF is uploaded even when a later step fails, so the annotations are
+      # still there to explain why
+      - name: Upload SARIF
+        if: always() && hashFiles('archray-report.sarif') != ''
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: archray-report.sarif
+          category: archray
+
+      - name: Comment on the pull request
+        if: always() && github.event_name == 'pull_request'
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          header: archray
+          path: archray-report-pr.md
+
+      - name: Keep the full report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: archray-report
+          path: |
+            archray-report.html
+            archray-report-tour.md
+            archray-report-changes.md
+            archray-report.sarif
+          if-no-files-found: warn
+
+      - name: Quality gate
+        run: |
+          archray . --format json --out /tmp/gate --fail-under 60 \
+            ${{ github.event_name == 'pull_request'
+                && '--compare /tmp/base-report.json --fail-on-new' || '' }}
+
+  # The parser toolchain is the part most likely to break per platform, so it is
+  # exercised where it actually differs rather than assumed to work.
+  toolchain:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python: ["3.10", "3.12"]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - run: pip install -e ".[parsers,dev]"
+      - run: python -m archray --doctor
+      - run: pytest -q
+
+  # MSYS2/UCRT64 has no matching wheels, so the grammars are compiled from
+  # source here; this job is what proves that path still works.
+  msys2:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: >-
+            mingw-w64-ucrt-x86_64-python
+            mingw-w64-ucrt-x86_64-python-pip
+            mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-python-setuptools
+            git
+      - run: pip install -e ".[dev]"
+      - run: python -m archray --doctor
+      - name: Analyse without the optional grammars
+        run: python -m archray . --format json --out /tmp/msys-report
+      - name: Build the grammars from source and re-run
+        continue-on-error: true
+        run: |
+          pip install tree-sitter tree-sitter-java tree-sitter-typescript \
+            tree-sitter-c-sharp tree-sitter-cpp tree-sitter-c
+          python -m archray --doctor
+          pytest -q
